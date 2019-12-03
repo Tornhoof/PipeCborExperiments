@@ -5,35 +5,37 @@ using System.IO;
 using System.IO.Pipelines;
 using System.Text;
 using System.Threading.Tasks;
+using BenchmarkDotNet.Running;
 using PeterO.Cbor;
 
 namespace StreamingCbor
 {
     class Program
     {
-        static async Task Main(string[] args)
+        static void Main(string[] args)
         {
+            BenchmarkRunner.Run<StreamingBenchmark>();
 
-            var po = new PipeOptions();
-            var pipe = new Pipe(po);
-            var map = new Dictionary<string, object>
-            {
-                {"Hello", "World"},
-                {"This", Encoding.UTF8.GetBytes("Universe")},
-            };
-            Task writing = FillPipeAsync(map, pipe.Writer);
-            Task reading = ReadPipeAsync(pipe.Reader);
+            //var po = new PipeOptions();
+            //var pipe = new Pipe(po);
+            //var map = new Dictionary<string, object>
+            //{
+            //    {"Hello", "World"},
+            //    {"This", Encoding.UTF8.GetBytes("Universe")},
+            //};
+            //Task writing = FillPipeAsync(map, pipe.Writer);
+            //Task reading = ReadPipeAsync(pipe.Reader);
 
-            await Task.WhenAll(reading, writing).ConfigureAwait(false);
+            //await Task.WhenAll(reading, writing).ConfigureAwait(false);
 
-            var output = await (Task<Dictionary<string, string>>) reading;
+            //var output = await (Task<Dictionary<string, string>>) reading;
 
         }
 
         private static async Task FillPipeAsync(Dictionary<string, object> input, PipeWriter writer)
         {
             CborWriter cborWriter = new CborWriter(writer);
-            var document = new Document { Key = "Hello", Value = GetText(500)};
+            var document = new Document { Key = GetText(1000), Value = GetText(1000)};
             var formatter = new ComplexClassFormatter<Document>();
             await formatter.SerializeAsync(cborWriter, document).ConfigureAwait(false);
             //await cborWriter.WriteMap(input).ConfigureAwait(false);

@@ -59,14 +59,13 @@ namespace StreamingCbor
                 var switchCaseValue = Expression.SwitchCase(Expression.Goto(labels[counter]), Expression.Constant(counter++));
                 switchCases.Add(switchCaseValue);
             }
-            switchCases.Add(Expression.SwitchCase(Expression.Goto(returnLabel, Expression.Default(typeof(ValueTask))), Expression.Constant(MaxSteps)));
             var switchExpression = Expression.Switch(stateParam, switchCases.ToArray());
             expressions.Add(switchExpression);
             for (int i = 0; i < properties.Length; i++)
             {
                 var property = properties[i];
                 var nameBody = BuildWriteExpression(writerParam, result, FindWriterMethod(nameof(CborWriter.WriteString)), Expression.Constant(property.Name),
-                    cancellationTokenParam, stateParam, returnLabel);
+                    cancellationTokenParam, stateParam, returnLabel, (i * 2) + 1); // next following value state
                 if (i == 0)
                 {
                     var beginMapExpression = Expression.Call(writerParam, nameof(CborWriter.WriteBeginMap), null, Expression.Constant(properties.Length));
@@ -75,7 +74,7 @@ namespace StreamingCbor
                 expressions.Add(Expression.Label(labels[i * 2]));
                 expressions.Add(nameBody);
                 var valueBody = BuildWriteExpression(writerParam, result, FindWriterMethod(nameof(CborWriter.WriteString)), Expression.Property(valueParam, property),
-                    cancellationTokenParam, stateParam, returnLabel);
+                    cancellationTokenParam, stateParam, returnLabel, (i + 1) * 2); // next following name state
                 expressions.Add(Expression.Label(labels[(i * 2) + 1]));
                 expressions.Add(valueBody);
             }
@@ -88,14 +87,14 @@ namespace StreamingCbor
         }
 
         private static BlockExpression BuildWriteExpression(ParameterExpression writerParameter, ParameterExpression result, MethodInfo writerMethod, Expression argument,
-            ParameterExpression cancellationTokenParameter, ParameterExpression stateParameter, LabelTarget returnLabel)
+            ParameterExpression cancellationTokenParameter, ParameterExpression stateParameter, LabelTarget returnLabel, int state)
         {
             var assignExpression = Expression.Assign(result, Expression.Call(writerParameter, writerMethod, argument, cancellationTokenParameter));
             var ifExpression = Expression.IfThen(
                 Expression.IsFalse(
                     Expression.Property(result, nameof(ValueTask.IsCompletedSuccessfully))),
                 Expression.Block(
-                    Expression.PostIncrementAssign(stateParameter),
+                    Expression.Assign(stateParameter, Expression.Constant(state)),
                     Expression.Return(returnLabel, result)));
             var block = Expression.Block(new[] {result}, assignExpression, ifExpression);
             return block;
@@ -108,9 +107,8 @@ namespace StreamingCbor
                 writer.WriteNull();
                 await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
                 return;
-            }
-
-            // from a conceptional point of view, this is a state machine with MaxSteps steps
+            } 
+            
             int step = 0;
             do
             {
