@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipelines;
@@ -12,8 +13,9 @@ namespace StreamingCbor
     {
         static async Task Main(string[] args)
         {
-            var pipe = new Pipe(PipeOptions.Default);
-            // var text = GetText(5096);
+
+            var po = new PipeOptions();
+            var pipe = new Pipe(po);
             var map = new Dictionary<string, object>
             {
                 {"Hello", "World"},
@@ -24,26 +26,31 @@ namespace StreamingCbor
 
             await Task.WhenAll(reading, writing).ConfigureAwait(false);
 
-            var output = await (Task<Dictionary<string, object>>) reading;
+            var output = await (Task<Dictionary<string, string>>) reading;
 
         }
 
         private static async Task FillPipeAsync(Dictionary<string, object> input, PipeWriter writer)
         {
             CborWriter cborWriter = new CborWriter(writer);
-            await cborWriter.WriteMap(input).ConfigureAwait(false);
+            var document = new Document { Key = "Hello", Value = GetText(5000)};
+            var formatter = new ComplexClassFormatter<Document>();
+            await formatter.SerializeAsync(cborWriter, document, new State()).ConfigureAwait(false);
+            //await cborWriter.WriteMap(input).ConfigureAwait(false);
             await cborWriter.FlushAsync().ConfigureAwait(false);
             await writer.CompleteAsync().ConfigureAwait(false);
         }
 
-        private static async Task<Dictionary<string, object>> ReadPipeAsync(PipeReader reader)
+        private static async Task<Dictionary<string, string>> ReadPipeAsync(PipeReader reader)
         {
             await using var memoryStream = new MemoryStream();
+            
             while (true)
             {
                 ReadResult result = await reader.ReadAsync();
                 await memoryStream.WriteSequenceAsync(result.Buffer).ConfigureAwait(false);
-                if (result.IsCompleted)
+                reader.AdvanceTo(result.Buffer.End);
+                if (result.IsCompleted || result.IsCanceled)
                 {
                     break;
                 }
@@ -53,7 +60,7 @@ namespace StreamingCbor
             reader.Complete();
             memoryStream.Position = 0;
             var o = CBORObject.Read(memoryStream);
-            var text = o.ToObject<Dictionary<string, object>>();
+            var text = o.ToObject<Dictionary<string, string>>();
             return text;
         }
 

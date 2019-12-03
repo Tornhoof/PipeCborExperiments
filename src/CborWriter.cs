@@ -50,7 +50,7 @@ namespace StreamingCbor
             _pipeWriter.Advance(bytesWritten);
         }
 
-        private void WriteNull()
+        public void WriteNull()
         {
             WriteEncodedType(CborType.Primitive, (byte) SimpleValues.Null);
         }
@@ -59,7 +59,6 @@ namespace StreamingCbor
         {
             var finalLength = Encoding.UTF8.GetByteCount(value.Span);
             WriteInteger(CborType.TextString, (ulong) finalLength);
-            await FlushAsync(cancellationToken).ConfigureAwait(false);
             OperationStatus opStatus;
             do
             {
@@ -81,9 +80,14 @@ namespace StreamingCbor
             await FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        public void WriteBeginMap(int count)
+        {
+            WriteSize(CborType.Map, count);
+        }
+
         public async ValueTask WriteMap(ICollection<KeyValuePair<string, object>> map, CancellationToken cancellationToken = default)
         {
-            WriteSize(CborType.Map, map.Count);
+            WriteBeginMap(map.Count);
             foreach (var kvp in map)
             {
                 await WriteString(kvp.Key, cancellationToken).ConfigureAwait(false);
@@ -176,7 +180,6 @@ namespace StreamingCbor
         private async ValueTask WriteBytes(ReadOnlyMemory<byte> value, CancellationToken cancellationToken = default)
         {
             WriteInteger(CborType.ByteString, (ulong)value.Length);
-            await FlushAsync(cancellationToken).ConfigureAwait(false);
             do
             {
                 var length = value.Length < MinBuffer ? value.Length : MinBuffer;
