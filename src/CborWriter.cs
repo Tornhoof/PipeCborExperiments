@@ -81,9 +81,9 @@ namespace StreamingCbor
             await FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        public async ValueTask WriteMap(IDictionary<string, object> map, CancellationToken cancellationToken = default)
+        public async ValueTask WriteMap(ICollection<KeyValuePair<string, object>> map, CancellationToken cancellationToken = default)
         {
-            WriteSize(CborType.Map, null);
+            WriteSize(CborType.Map, map.Count);
             foreach (var kvp in map)
             {
                 await WriteString(kvp.Key, cancellationToken).ConfigureAwait(false);
@@ -111,7 +111,6 @@ namespace StreamingCbor
                     }
                 }
             }
-            WriteEncodedType(CborType.Primitive, (byte) CborTypeAddInfo.Break);
             await FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -203,7 +202,7 @@ namespace StreamingCbor
             }
         }
 
-        private void WriteInteger(CborType type, in ulong value)
+        private void WriteInteger(CborType type, ulong value)
         {
             if (value <= 23)
             {
