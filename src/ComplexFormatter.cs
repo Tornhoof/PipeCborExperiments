@@ -18,21 +18,28 @@ namespace StreamingCbor
         }
     }
 
-    public class State
-    {
-        public int Step { get; set; } = 0;
-    }
-
     public sealed class ComplexClassFormatter<T> : ComplexFormatter where T : class
     {
         private static readonly int MaxSteps = typeof(T).GetProperties().Length * 2;
         private static readonly SerializeDelegate Serializer = BuildDelegate();
 
+        /// <summary>
+        /// The trick is simple:
+        /// We build a switch table for each step in the state machine, if a method's return task is not completed successfully the
+        /// task is returned further for awaiting and the state of the machine is set to the next state
+        /// Example:
+        /// State 0 -> Write Name of 1. Property (and include the BeginMap)
+        /// State 1 -> Write Value of 1. Property
+        /// State 2 -> Write Name of 2. Property
+        /// State 3 -> Write Value of 2. Property
+        /// State 4 -> End
+        /// </summary>
+        /// <returns></returns>
         private static SerializeDelegate BuildDelegate()
         {
             var writerParam = Expression.Parameter(typeof(CborWriter), "writer");
             var valueParam = Expression.Parameter(typeof(T), "value");
-            var stateParam = Expression.Parameter(typeof(State), "state");
+            var stateParam = Expression.Parameter(typeof(int).MakeByRefType(), "state");
             var cancellationTokenParam = Expression.Parameter(typeof(CancellationToken), "cancellationToken");
 
             var properties = typeof(T).GetProperties();
@@ -42,7 +49,7 @@ namespace StreamingCbor
             var returnLabel = Expression.Label(typeof(ValueTask), "return");
             var labels = new LabelTarget[properties.Length * 2];
             int counter = 0;
-            for (int i = 0; i < properties.Length; i++)
+            for (int i = 0; i < properties.Length; i++) // Build array with step labels we use for reentry
             {
                 var property = properties[i];
                 labels[counter] = Expression.Label($"{property.Name + "Name"}");
@@ -53,7 +60,7 @@ namespace StreamingCbor
                 switchCases.Add(switchCaseValue);
             }
             switchCases.Add(Expression.SwitchCase(Expression.Goto(returnLabel, Expression.Default(typeof(ValueTask))), Expression.Constant(MaxSteps)));
-            var switchExpression = Expression.Switch(Expression.Property(stateParam, nameof(State.Step)), switchCases.ToArray());
+            var switchExpression = Expression.Switch(stateParam, switchCases.ToArray());
             expressions.Add(switchExpression);
             for (int i = 0; i < properties.Length; i++)
             {
@@ -73,7 +80,7 @@ namespace StreamingCbor
                 expressions.Add(valueBody);
             }
 
-            expressions.Add(Expression.Assign(Expression.Property(stateParam, nameof(State.Step)), Expression.Constant(MaxSteps)));
+            expressions.Add(Expression.Assign(stateParam, Expression.Constant(MaxSteps)));
             expressions.Add(Expression.Label(returnLabel, Expression.Default(typeof(ValueTask))));
             var block = Expression.Block(expressions);
             var lambda = Expression.Lambda<SerializeDelegate>(block, writerParam, valueParam, stateParam, cancellationTokenParam);
@@ -88,14 +95,13 @@ namespace StreamingCbor
                 Expression.IsFalse(
                     Expression.Property(result, nameof(ValueTask.IsCompletedSuccessfully))),
                 Expression.Block(
-                    Expression.PostIncrementAssign(
-                        Expression.Property(stateParameter, nameof(State.Step))),
+                    Expression.PostIncrementAssign(stateParameter),
                     Expression.Return(returnLabel, result)));
             var block = Expression.Block(new[] {result}, assignExpression, ifExpression);
             return block;
         }
 
-        public async ValueTask SerializeAsync(CborWriter writer, T value, State state, CancellationToken cancellationToken = default)
+        public async ValueTask SerializeAsync(CborWriter writer, T value, CancellationToken cancellationToken = default)
         {
             if (value is null)
             {
@@ -104,12 +110,18 @@ namespace StreamingCbor
                 return;
             }
 
+            // from a conceptional point of view, this is a state machine with MaxSteps steps
+            int step = 0;
             do
             {
-                await Serializer(writer, value, state, cancellationToken).ConfigureAwait(false);
-            } while (state.Step < MaxSteps);
+                var task = Serializer(writer, value, ref step, cancellationToken);
+                if (!task.IsCompletedSuccessfully)
+                {
+                    await task.ConfigureAwait(false);
+                }
+            } while (step < MaxSteps);
         }
 
-        private delegate ValueTask SerializeDelegate(CborWriter writer, T value, State state, CancellationToken cancellationToken = default);
+        private delegate ValueTask SerializeDelegate(CborWriter writer, T value, ref int state, CancellationToken cancellationToken = default);
     }
 }

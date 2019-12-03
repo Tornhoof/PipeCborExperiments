@@ -33,9 +33,9 @@ namespace StreamingCbor
         private static async Task FillPipeAsync(Dictionary<string, object> input, PipeWriter writer)
         {
             CborWriter cborWriter = new CborWriter(writer);
-            var document = new Document { Key = "Hello", Value = GetText(5000)};
+            var document = new Document { Key = "Hello", Value = GetText(500)};
             var formatter = new ComplexClassFormatter<Document>();
-            await formatter.SerializeAsync(cborWriter, document, new State()).ConfigureAwait(false);
+            await formatter.SerializeAsync(cborWriter, document).ConfigureAwait(false);
             //await cborWriter.WriteMap(input).ConfigureAwait(false);
             await cborWriter.FlushAsync().ConfigureAwait(false);
             await writer.CompleteAsync().ConfigureAwait(false);
