@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipelines;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Running;
@@ -12,9 +13,13 @@ namespace StreamingCbor
 {
     class Program
     {
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
             BenchmarkRunner.Run<StreamingBenchmark>();
+            //var sb = new StreamingBenchmark();
+            //sb.Length = 1000;
+            //sb.Setup();
+            //await sb.SerializePipe();
 
             //var po = new PipeOptions();
             //var pipe = new Pipe(po);

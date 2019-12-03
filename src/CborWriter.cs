@@ -5,6 +5,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipelines;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Unicode;
 using System.Threading;
@@ -80,6 +82,7 @@ namespace StreamingCbor
             await FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void WriteBeginMap(int count)
         {
             WriteSize(CborType.Map, count);
@@ -193,6 +196,7 @@ namespace StreamingCbor
             await FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void WriteSize(CborType type, long? size)
         {
             if (size is null)
@@ -239,11 +243,13 @@ namespace StreamingCbor
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void WriteEncodedType(CborType type, byte value)
         {
             WriteRawByte((byte) ((byte) type << 5 | (value & 0x1f)));
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void WriteRawByte(byte value)
         {
             Span<byte> buffer = _pipeWriter.GetSpan(1);
