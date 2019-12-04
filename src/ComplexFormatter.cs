@@ -3,8 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
-using System.Reflection.Metadata;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -22,6 +20,8 @@ namespace StreamingCbor
     {
         private static readonly int MaxSteps = typeof(T).GetProperties().Length * 2;
         private static readonly SerializeDelegate Serializer = BuildDelegate();
+
+        public static readonly ComplexClassFormatter<T> Default = new ComplexClassFormatter<T>();
 
         /// <summary>
         /// The trick is simple:
@@ -100,24 +100,31 @@ namespace StreamingCbor
             return block;
         }
 
-        public async ValueTask SerializeAsync(CborWriter writer, T value, CancellationToken cancellationToken = default)
+        public ValueTask SerializeAsync(CborWriter writer, T value, CancellationToken cancellationToken = default)
         {
             if (value is null)
             {
                 writer.WriteNull();
-                await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
-                return;
-            } 
-            
-            int step = 0;
-            do
+                return writer.FlushAsync(cancellationToken);
+            }
+
+            var step = 0;
+            var task = Serializer(writer, value, ref step, cancellationToken);
+            if (task.IsCompletedSuccessfully && step == MaxSteps) // if everything is synchronous, we should not hit any async path at all
             {
-                var task = Serializer(writer, value, ref step, cancellationToken);
-                if (!task.IsCompletedSuccessfully)
-                {
-                    await task.ConfigureAwait(false);
-                }
-            } while (step < MaxSteps);
+                return writer.FlushAsync(cancellationToken);
+            }
+
+            return AwaitSerializeAsync(task, writer, value, step, cancellationToken);
+        }
+
+        private async ValueTask AwaitSerializeAsync(ValueTask task, CborWriter writer, T value, int step, CancellationToken cancellationToken = default)
+        {
+            await task.ConfigureAwait(false);
+            while (step < MaxSteps)
+            {
+                await Serializer(writer, value, ref step, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         private delegate ValueTask SerializeDelegate(CborWriter writer, T value, ref int state, CancellationToken cancellationToken = default);

@@ -32,10 +32,10 @@ namespace StreamingCbor
         [Benchmark]
         public async Task SerializePipe()
         {
-            var pipe = new Pipe();
-            var writing = FillPipeAsync(document, pipe.Writer);
-            var reading = ReadPipeAsync(pipe.Reader);
-            await Task.WhenAll(reading, writing).ConfigureAwait(false);
+            var pipe = PipeWriter.Create(Stream.Null);
+            CborWriter cborWriter = new CborWriter(PipeWriter.Create(Stream.Null));
+            await ComplexClassFormatter<Document>.Default.SerializeAsync(cborWriter, document).ConfigureAwait(false);
+            await pipe.CompleteAsync().ConfigureAwait(false);
         }
 
         [Benchmark]
@@ -49,32 +49,7 @@ namespace StreamingCbor
         {
             await Cbor.SerializeAsync(document, Stream.Null, CborOptions.Default).ConfigureAwait(false);
         }
-
-        private static async Task FillPipeAsync(Document document, PipeWriter writer)
-        {
-            CborWriter cborWriter = new CborWriter(writer);
-            var formatter = new ComplexClassFormatter<Document>();
-            await formatter.SerializeAsync(cborWriter, document).ConfigureAwait(false);
-            await cborWriter.FlushAsync().ConfigureAwait(false);
-            await writer.CompleteAsync().ConfigureAwait(false);
-        }
-
-        private static async Task ReadPipeAsync(PipeReader reader)
-        {
-            while (true)
-            {
-                ReadResult result = await reader.ReadAsync();
-                reader.AdvanceTo(result.Buffer.End);
-                if (result.IsCompleted || result.IsCanceled)
-                {
-                    break;
-                }
-            }
-
-            // Mark the PipeReader as complete
-            reader.Complete();
-        }
-
+        
         private const string LoremIpsum = "Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam voluptua. At vero eos et accusam et justo duo dolores et ea rebum. Stet clita kasd gubergren, no sea takimata sanctus est Lorem ipsum dolor sit amet.";
 
         private static string GetText(int length)

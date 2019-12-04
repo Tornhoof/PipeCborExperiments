@@ -33,7 +33,7 @@ namespace StreamingCbor
 
             //await Task.WhenAll(reading, writing).ConfigureAwait(false);
 
-            //var output = await (Task<Dictionary<string, string>>) reading;
+            //var output = await (Task<Dictionary<string, string>>)reading;
 
         }
 
