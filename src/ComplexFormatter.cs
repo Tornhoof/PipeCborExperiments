@@ -19,9 +19,19 @@ namespace StreamingCbor
     public sealed class ComplexClassFormatter<T> : ComplexFormatter where T : class
     {
         private static readonly int MaxSteps = typeof(T).GetProperties().Length * 2;
-        private static readonly SerializeDelegate Serializer = BuildDelegate();
+        private static readonly SerializeDelegate Serializer = BuildSerializeDelegate();
+        private static readonly DeserializeDelegate Deserializer = BuildDeserializeDelegate();
 
         public static readonly ComplexClassFormatter<T> Default = new ComplexClassFormatter<T>();
+
+        private static DeserializeDelegate BuildDeserializeDelegate()
+        {
+            var readerParam = Expression.Parameter(typeof(CborReader), "reader");
+            var wrappedResultParam = Expression.Parameter(typeof(WrappedResult).MakeByRefType(), "wrappedResult");
+            var cancellationTokenParam = Expression.Parameter(typeof(CancellationToken), "cancellationToken");
+            return null;
+        }
+
 
         /// <summary>
         /// The trick is simple:
@@ -35,7 +45,7 @@ namespace StreamingCbor
         /// State 4 -> End
         /// </summary>
         /// <returns></returns>
-        private static SerializeDelegate BuildDelegate()
+        private static SerializeDelegate BuildSerializeDelegate()
         {
             var writerParam = Expression.Parameter(typeof(CborWriter), "writer");
             var valueParam = Expression.Parameter(typeof(T), "value");
@@ -118,6 +128,7 @@ namespace StreamingCbor
             return AwaitSerializeAsync(task, writer, value, step, cancellationToken);
         }
 
+
         private async ValueTask AwaitSerializeAsync(ValueTask task, CborWriter writer, T value, int step, CancellationToken cancellationToken = default)
         {
             await task.ConfigureAwait(false);
@@ -127,6 +138,51 @@ namespace StreamingCbor
             }
         }
 
+        public ValueTask<T> DeserializeAsync(CborReader reader, CancellationToken cancellationToken = default)
+        {
+            var result = new WrappedResult();
+            var task = Deserializer(reader, ref result, cancellationToken);
+            if (task.IsCompletedSuccessfully && result.State == MaxSteps) // if everything is synchronous, we should not hit any async path at all
+            {
+                return new ValueTask<T>(result.Result);
+            }
+
+            return AwaitDeserializeAsync(task.AsTask(), reader, result, cancellationToken);
+        }
+
+        private async ValueTask<T> AwaitDeserializeAsync(Task task, CborReader reader, WrappedResult result, CancellationToken cancellationToken)
+        {
+            await task.ConfigureAwait(false);
+            result.TempTask = task;
+            while (result.State < MaxSteps)
+            {
+                // This is not really nice, as depending on the valuetasksource this allocates the task
+                // The idea is, that only if the valuetask really needs awaiting the delegate will return and
+                // then the valuetask wraps a task anyway.
+                // This is not completely true, as custom valuetasksources might behave differently
+                var vTask = Deserializer(reader, ref result, cancellationToken);
+                if (vTask.IsCompletedSuccessfully && result.State == MaxSteps)
+                {
+                    return result.Result;
+                }
+
+                task = vTask.AsTask();
+                result.TempTask = task;
+            }
+
+            return result.Result;
+        }
+
         private delegate ValueTask SerializeDelegate(CborWriter writer, T value, ref int state, CancellationToken cancellationToken = default);
+
+        private delegate ValueTask DeserializeDelegate(CborReader reader, ref WrappedResult result, CancellationToken cancellationToken = default);
+
+        private struct WrappedResult
+        {
+            public T Result { get; set; }
+            public Task TempTask { get; set; }
+            public int State { get; set; }
+        }
     }
+
 }
