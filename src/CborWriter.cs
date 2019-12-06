@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Pipelines;
 using System.Reflection;
+using System.Reflection.Metadata.Ecma335;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Unicode;
@@ -18,6 +19,7 @@ namespace StreamingCbor
     {
         private readonly PipeWriter _pipeWriter;
         private const int MinBuffer = 500;
+        private int _pending;
         private const byte IndefiniteLength = 31;
 
         public CborWriter(PipeWriter pipeWriter)
@@ -49,7 +51,7 @@ namespace StreamingCbor
             var output = _pipeWriter.GetSpan(finalLength);
             var opStatus = Utf8.FromUtf16(value, output, out _, out var bytesWritten);
             Debug.Assert(opStatus == OperationStatus.Done);
-            _pipeWriter.Advance(bytesWritten);
+            Advance(bytesWritten);
         }
 
         public void WriteNull()
@@ -70,12 +72,12 @@ namespace StreamingCbor
                 if (opStatus == OperationStatus.DestinationTooSmall)
                 {
                     value = value.Slice(charsRead);
-                    _pipeWriter.Advance(bytesWritten);
+                    Advance(bytesWritten);
                     await FlushAsync(cancellationToken).ConfigureAwait(false); // need to flush and stuff, so it's async now;
                 }
                 else
                 {
-                    _pipeWriter.Advance(bytesWritten);
+                    Advance(bytesWritten);
                 }
             } while (opStatus != OperationStatus.Done);
 
@@ -121,12 +123,50 @@ namespace StreamingCbor
             await FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void Advance(int bytes)
+        {
+            _pipeWriter.Advance(bytes);
+            _pending += bytes;
+        }
 
+        public ValueTask CompleteAsync(CancellationToken cancellationToken = default)
+        {
+            var t = FlushInternalAsync(cancellationToken);
+            if (t.IsCompletedSuccessfully)
+            {
+                _pipeWriter.Complete();
+                _pending = 0;
+                return default;
+            }
+
+            return AwaitCompleteAsync(t);
+        }
+
+        private async ValueTask AwaitCompleteAsync(ValueTask valueTask)
+        {
+            await valueTask.ConfigureAwait(false);
+            await _pipeWriter.CompleteAsync().ConfigureAwait(false);
+            _pending = 0;
+        }
+
+        /// <summary>
+        /// We try not to flush too early, only after MinBuffer is written, currently at 500 bytes
+        /// </summary>
+        /// <param name="cancellationToken"></param>
+        /// <returns></returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ValueTask FlushAsync(CancellationToken cancellationToken = default)
+        {
+            return _pending < MinBuffer ? default : FlushInternalAsync(cancellationToken);
+        }
+
+        private ValueTask FlushInternalAsync(CancellationToken cancellationToken = default)
         {
             var t = _pipeWriter.FlushAsync(cancellationToken);
             if (t.IsCompletedSuccessfully)
             {
+                _pending = 0;
                 return default;
             }
 
@@ -136,6 +176,7 @@ namespace StreamingCbor
         private async ValueTask AwaitValueTask(ValueTask<FlushResult> task)
         {
             await task.ConfigureAwait(false);
+            _pending = 0;
         }
 
         public ValueTask WriteBytes(byte[] value, CancellationToken cancellationToken = default)
@@ -168,7 +209,7 @@ namespace StreamingCbor
             int read;
             while ((read = await value.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0) 
             {
-                _pipeWriter.Advance(read);
+                Advance(read);
                 await FlushAsync(cancellationToken).ConfigureAwait(false);
             }
         }
@@ -177,7 +218,7 @@ namespace StreamingCbor
         {
             WriteInteger(CborType.ByteString, (ulong)value.Length);
             value.CopyTo(_pipeWriter.GetSpan(value.Length));
-            _pipeWriter.Advance(value.Length);
+            Advance(value.Length);
         }
 
         private async ValueTask WriteBytes(ReadOnlyMemory<byte> value, CancellationToken cancellationToken = default)
@@ -187,7 +228,7 @@ namespace StreamingCbor
             {
                 var length = value.Length < MinBuffer ? value.Length : MinBuffer;
                 value.Span.CopyTo(_pipeWriter.GetSpan(length));
-                _pipeWriter.Advance(length);
+                Advance(length);
                 value = value.Slice(length);
                 await FlushAsync(cancellationToken).ConfigureAwait(false);
 
@@ -225,21 +266,21 @@ namespace StreamingCbor
                 WriteEncodedType(type, 25);
                 Span<byte> bytes = _pipeWriter.GetSpan(2);
                 BinaryPrimitives.WriteUInt16BigEndian(bytes, (ushort)value);
-                _pipeWriter.Advance(2);
+                Advance(2);
             }
             else if (value <= uint.MaxValue)
             {
                 WriteEncodedType(type, 26);
                 Span<byte> bytes = _pipeWriter.GetSpan(4);
                 BinaryPrimitives.WriteUInt32BigEndian(bytes, (uint)value);
-                _pipeWriter.Advance(4);
+                Advance(4);
             }
             else
             {
                 WriteEncodedType(type, 27);
                 Span<byte> bytes = _pipeWriter.GetSpan(8);
                 BinaryPrimitives.WriteUInt64BigEndian(bytes, value);
-                _pipeWriter.Advance(8);
+                Advance(8);
             }
         }
 
@@ -254,7 +295,7 @@ namespace StreamingCbor
         {
             Span<byte> buffer = _pipeWriter.GetSpan(1);
             buffer[0] = value;
-            _pipeWriter.Advance(1);
+            Advance(1);
         }
     }
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -127,7 +128,6 @@ namespace StreamingCbor
 
             return AwaitSerializeAsync(task, writer, value, step, cancellationToken);
         }
-
 
         private async ValueTask AwaitSerializeAsync(ValueTask task, CborWriter writer, T value, int step, CancellationToken cancellationToken = default)
         {

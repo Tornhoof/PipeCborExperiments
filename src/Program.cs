@@ -16,10 +16,10 @@ namespace StreamingCbor
         static async Task Main(string[] args)
         {
             BenchmarkRunner.Run<StreamingBenchmark>();
-            //var sb = new StreamingBenchmark();
-            //sb.Length = 1000;
-            //sb.Setup();
-            //await sb.SerializePipe();
+            var sb = new StreamingBenchmark();
+            sb.Length = 1000000;
+            sb.Setup();
+            await sb.SerializePipe();
 
             //var po = new PipeOptions();
             //var pipe = new Pipe(po);

@@ -12,9 +12,10 @@ namespace StreamingCbor
 {
     [MemoryDiagnoser]
     [ShortRunJob]
+    [DisassemblyDiagnoser(recursiveDepth:2)]
     public class StreamingBenchmark
     {
-        [Params(100, 1000, 10000, 100000)]
+        [Params(100 , 1000, 10000, 100000)]
         public int Length;
 
         private Document document;
@@ -30,26 +31,37 @@ namespace StreamingCbor
         }
 
         [Benchmark]
-        public async Task SerializePipe()
+        public ValueTask SerializePipe()
         {
             var pipe = PipeWriter.Create(Stream.Null);
-            CborWriter cborWriter = new CborWriter(PipeWriter.Create(Stream.Null));
-            await ComplexClassFormatter<Document>.Default.SerializeAsync(cborWriter, document).ConfigureAwait(false);
-            await pipe.CompleteAsync().ConfigureAwait(false);
+            CborWriter cborWriter = new CborWriter(pipe);
+            var t = ComplexClassFormatter<Document>.Default.SerializeAsync(cborWriter, document);
+            if (t.IsCompletedSuccessfully)
+            {
+                return cborWriter.CompleteAsync();
+            }
+
+            return AwaitComplete(t, cborWriter);
         }
 
-        [Benchmark]
-        public void SerializePeterO()
+        private async ValueTask AwaitComplete(ValueTask valueTask, CborWriter writer)
         {
-            cborObject.WriteTo(Stream.Null);
+            await valueTask.ConfigureAwait(false);
+            await writer.CompleteAsync();
         }
 
+        //[Benchmark]
+        //public void SerializePeterO()
+        //{
+        //    cborObject.WriteTo(Stream.Null);
+        //}
+
         [Benchmark]
-        public async Task SerializeDahomey()
+        public Task SerializeDahomey()
         {
-            await Cbor.SerializeAsync(document, Stream.Null, CborOptions.Default).ConfigureAwait(false);
+            return Cbor.SerializeAsync(document, Stream.Null, CborOptions.Default);
         }
-        
+
         private const string LoremIpsum = "Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam voluptua. At vero eos et accusam et justo duo dolores et ea rebum. Stet clita kasd gubergren, no sea takimata sanctus est Lorem ipsum dolor sit amet.";
 
         private static string GetText(int length)
