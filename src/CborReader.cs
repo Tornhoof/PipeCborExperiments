@@ -1,8 +1,12 @@
-﻿using System.Buffers;
+﻿using System;
+using System.Buffers;
+using System.Buffers.Binary;
 using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
+using System.Text.Unicode;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace StreamingCbor
 {
@@ -10,10 +14,12 @@ namespace StreamingCbor
     {
         private readonly PipeReader _pipeReader;
         private ReadOnlySequence<byte> _currentSequence;
-        private static readonly byte NullByte = EncodeType(CborType.Primitive, (byte) SimpleValues.Null);
-        private static readonly byte MapByte = (byte) CborType.Map << 5;
+        private static readonly byte NullByte = CborWriter.EncodeType(CborType.Primitive, (byte) SimpleValues.Null);
+        private static readonly byte MapByte = CborWriter.EncodeType(CborType.Map, 0);
+        private static readonly byte TextStringByte = CborWriter.EncodeType(CborType.TextString, 0);
         private static readonly ValueTask<bool> TrueTask = new ValueTask<bool>(true).Preserve();
         private static readonly ValueTask<bool> FalseTask = new ValueTask<bool>(false).Preserve();
+        private static readonly ValueTask<string> NullTask = new ValueTask<string>((string) null).Preserve();
         private byte _token;
 
         public CborReader(PipeReader pipeReader)
@@ -64,16 +70,22 @@ namespace StreamingCbor
             var t = ReadNextToken(cancellationToken);
             if (t.IsCompletedSuccessfully)
             {
-                return _token == token ? TrueTask : FalseTask;
+                return IsToken(token) ? TrueTask : FalseTask;
             }
 
             return AwaitReadIsToken(t, token);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool IsToken(byte token)
+        {
+            return (_token & token) == token;
+        }
+
         private async ValueTask<bool> AwaitReadIsToken(ValueTask task, byte token)
         {
             await task.ConfigureAwait(false);
-            return (_token & token) == token;
+            return IsToken(token);
         }
 
         public ValueTask<bool> ReadIsMap(CancellationToken cancellationToken = default)
@@ -81,11 +93,84 @@ namespace StreamingCbor
             return ReadIsToken(MapByte, cancellationToken);
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static byte EncodeType(CborType type, byte value)
+        public ValueTask<string> ReadString(CancellationToken cancellationToken = default)
         {
-            return (byte) ((byte) type << 5 | (value & 0x1f));
+            var t = ReadIsNull(cancellationToken);
+            if (t.IsCompletedSuccessfully)
+            {
+                if (t.Result)
+                {
+                    return NullTask;
+                }
+
+                if (IsToken(TextStringByte))
+                {
+                    return DecodeString(cancellationToken);
+                }
+            }
+
+            return default;
         }
 
+        private ValueTask<string> DecodeString(CancellationToken cancellationToken = default)
+        {
+            var length = ReadLength();
+            if (_currentSequence.Length >= length)
+            {
+                return default;
+            }
+
+            return default;
+        }
+
+        private long ReadLength()
+        {
+            var minorValue = _token & 0x1F;
+            if (minorValue <= 23)
+            {
+                return minorValue;
+            }
+
+            if (minorValue == 24)
+            {
+                var length = _currentSequence.FirstSpan[0];
+                _currentSequence = _currentSequence.Slice(1);
+                _pipeReader.AdvanceTo(_currentSequence.Start);
+                return length;
+            }
+
+            if (minorValue == 25)
+            {
+                var length = BinaryPrimitives.ReadUInt16BigEndian(_currentSequence.FirstSpan.Slice(0, 2));
+                _currentSequence = _currentSequence.Slice(2);
+                _pipeReader.AdvanceTo(_currentSequence.Start);
+                return length;
+            }
+
+            if (minorValue == 26)
+            {
+                var length = BinaryPrimitives.ReadUInt32BigEndian(_currentSequence.FirstSpan.Slice(0, 4));
+                _currentSequence = _currentSequence.Slice(4);
+                _pipeReader.AdvanceTo(_currentSequence.Start);
+                return length;
+            }
+
+            if (minorValue == 27)
+            {
+                var length = BinaryPrimitives.ReadUInt64BigEndian(_currentSequence.FirstSpan.Slice(0, 8));
+                _currentSequence = _currentSequence.Slice(8);
+                _pipeReader.AdvanceTo(_currentSequence.Start);
+                return checked((long) length);
+            }
+
+            ThrowInvalidFormatException();
+            return default;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void ThrowInvalidFormatException()
+        {
+            throw new InvalidOperationException();
+        }
     }
 }
