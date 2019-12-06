@@ -1,9 +1,13 @@
 ﻿using System;
+using System.Buffers;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Text;
+using System.Text.Unicode;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -75,8 +79,22 @@ namespace StreamingCbor
             for (int i = 0; i < properties.Length; i++)
             {
                 var property = properties[i];
-                var nameBody = BuildWriteExpression(writerParam, result, FindWriterMethod(nameof(CborWriter.WriteString)), Expression.Constant(property.Name),
-                    cancellationTokenParam, stateParam, returnLabel, (i * 2) + 1); // next following value state
+                var writeNameExpressions = GetIntegersForMemberName(property.Name);
+
+                BlockExpression nameBody;
+                if (writeNameExpressions != null)
+                {
+                    var typesToMatch = writeNameExpressions.Select(a => a.Value.GetType());
+                    var propertyNameWriterMethodInfo =
+                        FindPublicInstanceMethod(writerParam.Type, nameof(CborWriter.WriteVerbatim), typesToMatch.ToArray());
+                    nameBody = Expression.Block(Expression.Call(writerParam, propertyNameWriterMethodInfo, writeNameExpressions));
+                }
+                else
+                {
+                    nameBody = BuildWriteExpression(writerParam, result, FindWriterMethod(nameof(CborWriter.WriteString)), Expression.Constant(property.Name),
+                        cancellationTokenParam, stateParam, returnLabel, (i * 2) + 1); // next following value state
+                }
+
                 if (i == 0)
                 {
                     var beginMapExpression = Expression.Call(writerParam, nameof(CborWriter.WriteBeginMap), null, Expression.Constant(properties.Length));
@@ -95,6 +113,11 @@ namespace StreamingCbor
             var block = Expression.Block(expressions);
             var lambda = Expression.Lambda<SerializeDelegate>(block, writerParam, valueParam, stateParam, cancellationTokenParam);
             return lambda.Compile();
+        }
+
+        private static MethodInfo FindPublicInstanceMethod(Type type, string name, params Type[] args)
+        {
+            return args?.Length > 0 ? type.GetMethod(name, args) : type.GetMethod(name);
         }
 
         private static BlockExpression BuildWriteExpression(ParameterExpression writerParameter, ParameterExpression result, MethodInfo writerMethod, Expression argument,
@@ -182,6 +205,57 @@ namespace StreamingCbor
             public T Result { get; set; }
             public Task TempTask { get; set; }
             public int State { get; set; }
+        }
+
+        /// <summary>
+        /// This is basically the same algorithm as in the t4 template to create the methods
+        /// It's necessary to update both
+        /// </summary>
+        private static ConstantExpression[] GetIntegersForMemberName(string formattedName)
+        {
+            var result = new List<ConstantExpression>();
+            var length = Encoding.UTF8.GetByteCount(formattedName);
+            if (length > 23)
+            {
+                return null; // fallback
+            }
+            var bytes = new byte[length+1];
+            bytes[0] = CborWriter.EncodeType(CborType.TextString, (byte) length);
+            var opStatus = Utf8.FromUtf16(formattedName, bytes.AsSpan(1), out _, out _);
+            Debug.Assert(opStatus == OperationStatus.Done);
+            var remaining = bytes.Length;
+            var ulongCount = Math.DivRem(remaining, 8, out remaining);
+            var offset = 0;
+            for (var j = 0; j < ulongCount; j++)
+            {
+                result.Add(Expression.Constant(BitConverter.ToUInt64(bytes, offset)));
+                offset += sizeof(ulong);
+            }
+
+            var uintCount = Math.DivRem(remaining, 4, out remaining);
+            for (var j = 0; j < uintCount; j++)
+            {
+                result.Add(Expression.Constant(BitConverter.ToUInt32(bytes, offset)));
+                offset += sizeof(uint);
+            }
+
+            var ushortCount = Math.DivRem(remaining, 2, out remaining);
+            for (var j = 0; j < ushortCount; j++)
+            {
+                result.Add(Expression.Constant(BitConverter.ToUInt16(bytes, offset)));
+                offset += sizeof(ushort);
+            }
+
+            var byteCount = Math.DivRem(remaining, 1, out remaining);
+            for (var j = 0; j < byteCount; j++)
+            {
+                result.Add(Expression.Constant(bytes[offset]));
+                offset++;
+            }
+
+            Debug.Assert(remaining == 0);
+            Debug.Assert(offset == bytes.Length);
+            return result.ToArray();
         }
     }
 

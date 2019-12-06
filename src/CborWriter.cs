@@ -5,8 +5,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipelines;
-using System.Reflection;
-using System.Reflection.Metadata.Ecma335;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Unicode;
@@ -15,7 +13,7 @@ using System.Threading.Tasks;
 
 namespace StreamingCbor
 {
-    public class CborWriter
+    public partial class CborWriter
     {
         private readonly PipeWriter _pipeWriter;
         private const int MinBuffer = 500;
@@ -258,43 +256,45 @@ namespace StreamingCbor
             }
             else if (value <= byte.MaxValue)
             {
-                WriteEncodedType(type, 24);
-                WriteRawByte((byte)value);
+                Span<byte> bytes = _pipeWriter.GetSpan(2);
+                bytes[1] = (byte) value;
+                bytes[0] = EncodeType(type, 24);
+                Advance(2);
             }
             else if (value <= ushort.MaxValue)
             {
-                WriteEncodedType(type, 25);
-                Span<byte> bytes = _pipeWriter.GetSpan(2);
-                BinaryPrimitives.WriteUInt16BigEndian(bytes, (ushort)value);
-                Advance(2);
+                Span<byte> bytes = _pipeWriter.GetSpan(3);
+                bytes[0] = EncodeType(type, 25);
+                BinaryPrimitives.WriteUInt16BigEndian(bytes.Slice(1), (ushort) value);
+                Advance(3);
             }
             else if (value <= uint.MaxValue)
             {
-                WriteEncodedType(type, 26);
-                Span<byte> bytes = _pipeWriter.GetSpan(4);
-                BinaryPrimitives.WriteUInt32BigEndian(bytes, (uint)value);
-                Advance(4);
+                Span<byte> bytes = _pipeWriter.GetSpan(5);
+                bytes[0] = EncodeType(type, 26);
+                BinaryPrimitives.WriteUInt32BigEndian(bytes.Slice(1), (uint) value);
+                Advance(5);
             }
             else
             {
-                WriteEncodedType(type, 27);
-                Span<byte> bytes = _pipeWriter.GetSpan(8);
-                BinaryPrimitives.WriteUInt64BigEndian(bytes, value);
-                Advance(8);
+                Span<byte> bytes = _pipeWriter.GetSpan(9);
+                bytes[0] = EncodeType(type, 27);
+                BinaryPrimitives.WriteUInt64BigEndian(bytes.Slice(1), value);
+                Advance(9);
             }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static byte EncodeType(CborType type, byte value)
+        {
+            return (byte) ((byte) type << 5 | (value & 0x1f));
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void WriteEncodedType(CborType type, byte value)
         {
-            WriteRawByte((byte) ((byte) type << 5 | (value & 0x1f)));
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private void WriteRawByte(byte value)
-        {
             Span<byte> buffer = _pipeWriter.GetSpan(1);
-            buffer[0] = value;
+            buffer[0] = EncodeType(type, value);
             Advance(1);
         }
     }

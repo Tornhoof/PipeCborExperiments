@@ -16,10 +16,16 @@ namespace StreamingCbor
         static async Task Main(string[] args)
         {
             BenchmarkRunner.Run<StreamingBenchmark>();
-            var sb = new StreamingBenchmark();
-            sb.Length = 1000000;
-            sb.Setup();
-            await sb.SerializePipe();
+            //var sb = new StreamingBenchmark();
+            //sb.Length = 1000000;
+            //sb.Setup();
+            //await sb.SerializePipe();
+            
+            var pipe = new Pipe();
+            Task writing = FillPipeAsync(pipe.Writer);
+            Task reading = ReadPipeAsync(pipe.Reader);
+
+            await Task.WhenAll(reading, writing).ConfigureAwait(false);
 
             //var po = new PipeOptions();
             //var pipe = new Pipe(po);
@@ -37,10 +43,10 @@ namespace StreamingCbor
 
         }
 
-        private static async Task FillPipeAsync(Dictionary<string, object> input, PipeWriter writer)
+        private static async Task FillPipeAsync(PipeWriter writer)
         {
             CborWriter cborWriter = new CborWriter(writer);
-            var document = new Document { Key = GetText(1000), Value = GetText(1000)};
+            var document = new Document { Key = "Hello", Value = "World"};
             var formatter = new ComplexClassFormatter<Document>();
             await formatter.SerializeAsync(cborWriter, document).ConfigureAwait(false);
             //await cborWriter.WriteMap(input).ConfigureAwait(false);
