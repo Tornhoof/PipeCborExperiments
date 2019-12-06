@@ -1,4 +1,6 @@
-﻿using System.Reflection.Metadata.Ecma335;
+﻿using System.IO.Pipelines;
+using System.Reflection.Metadata.Ecma335;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -12,19 +14,22 @@ namespace StreamingCbor
         /// <summary>
         /// Loop until we hit the end, ideal case scenario is that 
         /// </summary>
-        public async ValueTask Serialize(object value, CancellationToken cancellationToken = default)
+        public async ValueTask Serialize(PipeWriter writer, object value, CancellationToken cancellationToken = default)
         {
-            int step = 0;
+            int state = 0;
             do
             {
-                await SerializeInternal(value, ref step, cancellationToken).ConfigureAwait(false);
+                await SerializeInternal(writer, value, ref state, cancellationToken).ConfigureAwait(false);
 
-            } while (step < 4);
+            } while (state < 4);
         }
 
-        private ValueTask SerializeInternal(object value, ref int step, CancellationToken cancellationToken = default)
+        /// <summary>
+        /// The generated Expression Tree Delegate 
+        /// </summary>
+        private ValueTask SerializeInternal(PipeWriter writer, object value, ref int state, CancellationToken cancellationToken = default)
         {
-            switch (step)
+            switch (state)
             {
                 case 0:
                     goto WriteFirstKey;
@@ -39,57 +44,54 @@ namespace StreamingCbor
             }
 
             WriteFirstKey:
-            var task = WriteString("Hello");
+            var task = WriteString(writer, "Hello", cancellationToken);
             if (!task.IsCompletedSuccessfully)
             {
-                step = 1;
+                state = 1;
                 return task;
             }
 
             WriteFirstValue:
-            task = WriteString("World");
+            task = WriteString(writer, "World", cancellationToken);
             if (!task.IsCompletedSuccessfully)
             {
-                step = 2;
+                state = 2;
                 return task;
             }
 
             WriteSecondKey:
-            task = WriteString("Hello");
+            task = WriteString(writer, "Hello", cancellationToken);
             if (!task.IsCompletedSuccessfully)
             {
-                step = 3;
+                state = 3;
                 return task;
             }
 
             WriteSecondValue:
-            task = WriteString("Universe");
+            task = WriteString(writer, "Universe", cancellationToken);
             if (!task.IsCompletedSuccessfully)
             {
-                step = 4;
+                state = 4;
                 return task;
             }
 
             return default;
         }
 
-        private ValueTask WriteString(string value)
+        private ValueTask WriteString(PipeWriter pipeWriter, string value, CancellationToken cancellationToken = default)
         {
+            var t = pipeWriter.WriteAsync(Encoding.UTF8.GetBytes(value), cancellationToken);
+            if (t.IsCompletedSuccessfully)
+            {
+                return default;
+            }
             // write string
-            return FlushAsync();
+            return AwaitFlushResultTask(t);
         }
 
-        /// <summary>
-        /// This is the async part, if it needs flush, the flush could be async or sync
-        /// </summary>
-        private async ValueTask FlushAsync()
+        private async ValueTask AwaitFlushResultTask(ValueTask<FlushResult> vt)
         {
-            bool syncFlush = true;
-            if (syncFlush)
-            {
-                return;
-            }
-            await Task.Yield();
+            await vt.ConfigureAwait(false);
         }
     }
 }
