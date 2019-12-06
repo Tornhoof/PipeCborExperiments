@@ -12,7 +12,7 @@ namespace StreamingCbor
     public class PseudoCode
     {
         /// <summary>
-        /// Loop until we hit the end, ideal case scenario is that 
+        /// Loop until we hit the end, best case scenario is that it returns exactly once with the final state
         /// </summary>
         public async ValueTask Serialize(PipeWriter writer, object value, CancellationToken cancellationToken = default)
         {
@@ -75,6 +75,7 @@ namespace StreamingCbor
                 return task;
             }
 
+            state = 4;
             return default;
         }
 
